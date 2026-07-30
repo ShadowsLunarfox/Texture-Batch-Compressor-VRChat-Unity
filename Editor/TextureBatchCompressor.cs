@@ -6,13 +6,16 @@ using UnityEngine;
 
 public class TextureBatchCompressor : EditorWindow
 {
+    // EditorPrefs key prefix used to remember tool settings between Unity sessions.
     private const string PrefPrefix = "TextureBatchCompressor.";
 
+    // Shared option data for texture sizes, keyword parsing, and the UI language selector.
     private static readonly string[] MaxSizeLabels = { "32", "64", "128", "256", "512", "1024", "2048", "4096" };
     private static readonly int[] MaxSizeValues = { 32, 64, 128, 256, 512, 1024, 2048, 4096 };
     private static readonly char[] KeywordSeparators = { ',', ';', '\n', '\r' };
     private static readonly string[] LanguageLabels = { "English", "中文", "日本語", "한국어" };
 
+    // Supported interface languages. The enum order must match LanguageLabels and TextTable values.
     private enum ToolLanguage
     {
         English,
@@ -21,6 +24,7 @@ public class TextureBatchCompressor : EditorWindow
         Korean
     }
 
+    // Lightweight built-in localization table. Each value array is ordered as English, Chinese, Japanese, Korean.
     private static readonly Dictionary<string, string[]> TextTable = new Dictionary<string, string[]>
     {
         { "Texture Compressor", new[] { "Texture Compressor", "贴图压缩工具", "テクスチャ圧縮", "텍스처 압축기" } },
@@ -135,8 +139,10 @@ public class TextureBatchCompressor : EditorWindow
         { "Guide Risks Body", new[] { "Batch compression changes texture importer settings and .meta files. Back up the project or use version control before applying. Very small Max Size values can blur textures. Wrong settings on normal maps, UI, or important text images can visibly damage quality.", "批量压缩会修改贴图导入设置和 .meta 文件。应用前请备份项目或使用版本管理。过低的最大尺寸会让贴图变糊；法线贴图、UI、文字图片如果设置错误，画质会明显受损。", "一括圧縮はテクスチャのインポート設定と .meta ファイルを変更します。適用前にバックアップまたはバージョン管理を使ってください。最大サイズが小さすぎるとぼやけます。法線マップ、UI、文字画像の設定ミスは品質低下につながります。", "일괄 압축은 텍스처 임포트 설정과 .meta 파일을 변경합니다. 적용 전에 프로젝트를 백업하거나 버전 관리를 사용하세요. 최대 크기가 너무 작으면 텍스처가 흐려질 수 있습니다. 노멀 맵, UI, 글자 이미지에 잘못 적용하면 품질이 크게 떨어질 수 있습니다." } }
     };
 
+    // Shared language state keeps the main tool window and the guide window synchronized.
     private static ToolLanguage activeLanguage = ToolLanguage.English;
 
+    // Folder list and scroll positions used by the editor UI.
     private readonly List<string> folderPaths = new List<string> { "Assets" };
     private string pendingFolderPath = "Assets";
     private Vector2 mainScrollPos;
@@ -144,11 +150,13 @@ public class TextureBatchCompressor : EditorWindow
     private Vector2 textureScrollPos;
     private readonly List<TextureItem> textures = new List<TextureItem>();
 
+    // Default importer settings applied to every ready texture.
     private int newMaxSize = 512;
     private TextureImporterCompression compression = TextureImporterCompression.Compressed;
     private bool useCrunch = false;
     private int crunchQuality = 50;
 
+    // Optional platform overrides for VRChat PC and Quest/mobile style builds.
     private bool overrideStandalone = false;
     private int standaloneMaxSize = 1024;
     private TextureImporterFormat standaloneFormat = TextureImporterFormat.Automatic;
@@ -157,6 +165,7 @@ public class TextureBatchCompressor : EditorWindow
     private int androidMaxSize = 512;
     private TextureImporterFormat androidFormat = TextureImporterFormat.ASTC_6x6;
 
+    // Filtering state controls which scanned textures are allowed into the apply step.
     private bool skipNormalMaps = false;
     private bool skipSprites = false;
     private bool skipSmallerThanTarget = false;
@@ -171,6 +180,7 @@ public class TextureBatchCompressor : EditorWindow
     private bool showPlatformOverrides = true;
     private ToolLanguage language = ToolLanguage.English;
 
+    // Cached metadata for one scanned texture. This keeps drawing, preview, and apply logic consistent.
     private class TextureItem
     {
         public Texture2D Texture;
@@ -194,6 +204,7 @@ public class TextureBatchCompressor : EditorWindow
         window.minSize = new Vector2(760, 640);
     }
 
+    // Load saved settings when Unity creates or reloads the editor window.
     private void OnEnable()
     {
         minSize = new Vector2(760, 640);
@@ -201,16 +212,19 @@ public class TextureBatchCompressor : EditorWindow
         activeLanguage = language;
     }
 
+    // Persist settings when the window closes or Unity recompiles editor scripts.
     private void OnDisable()
     {
         SaveSettings(PrefPrefix);
     }
 
+    // Resolve a localized UI string for the current tool language.
     private string Text(string key)
     {
         return Translate(language, key);
     }
 
+    // Resolve a localized string for any language, used by both the main window and guide window.
     private static string Translate(ToolLanguage targetLanguage, string key)
     {
         int languageIndex = Mathf.Clamp((int)targetLanguage, 0, LanguageLabels.Length - 1);
@@ -223,11 +237,13 @@ public class TextureBatchCompressor : EditorWindow
         return key;
     }
 
+    // Format a localized string with runtime values such as counts, paths, and texture settings.
     private string TextFormat(string key, params object[] args)
     {
         return string.Format(Text(key), args);
     }
 
+    // Main editor UI entry point. Individual sections are split into Draw* methods below.
     private void OnGUI()
     {
         mainScrollPos = EditorGUILayout.BeginScrollView(mainScrollPos);
@@ -266,6 +282,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorGUILayout.EndScrollView();
     }
 
+    // Top bar with the guide button and language selector.
     private void DrawLanguageSection()
     {
         EditorGUILayout.BeginHorizontal();
@@ -285,6 +302,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorGUILayout.EndHorizontal();
     }
 
+    // Compact status line showing scan count, ready-to-process count, and skipped count.
     private void DrawScanSummary()
     {
         int readyCount = GetReadyCount();
@@ -292,6 +310,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorGUILayout.HelpBox(TextFormat("Scanned: {0} | Ready: {1} | Skipped: {2}", textures.Count, readyCount, skippedCount), MessageType.Info);
     }
 
+    // Folder management UI. Users can add, browse, remove, and scan multiple Assets folders.
     private void DrawFolderSection()
     {
         GUILayout.Label(Text("Target Folders"), EditorStyles.boldLabel);
@@ -352,6 +371,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorGUILayout.EndVertical();
     }
 
+    // Preset UI grouped by asset type and target platform.
     private void DrawPresetSection()
     {
         GUILayout.Label(Text("Presets"), EditorStyles.boldLabel);
@@ -384,6 +404,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorGUILayout.EndVertical();
     }
 
+    // Filter controls that decide which scanned textures are skipped before applying changes.
     private void DrawFilterSection()
     {
         showFilters = EditorGUILayout.Foldout(showFilters, Text("Filters"), true);
@@ -412,6 +433,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorGUILayout.EndVertical();
     }
 
+    // Default texture importer controls shared by every processed texture.
     private void DrawCompressionSection()
     {
         GUILayout.Label(Text("Default Import Settings"), EditorStyles.boldLabel);
@@ -427,6 +449,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorGUILayout.EndVertical();
     }
 
+    // Optional per-platform override controls for Standalone and Android.
     private void DrawPlatformOverrideSection()
     {
         showPlatformOverrides = EditorGUILayout.Foldout(showPlatformOverrides, Text("Platform Overrides"), true);
@@ -442,6 +465,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorGUILayout.EndVertical();
     }
 
+    // Draws one platform override block and writes the values back through ref parameters.
     private void DrawPlatformFields(string platformName, ref bool overrideEnabled, ref int maxSize, ref TextureImporterFormat format)
     {
         overrideEnabled = EditorGUILayout.Toggle(TextFormat("Override {0}", platformName), overrideEnabled);
@@ -457,6 +481,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorGUI.indentLevel--;
     }
 
+    // Preview/apply action controls. Dry Run prevents asset changes and only logs the plan.
     private void DrawActionSection()
     {
         GUILayout.Label(Text("Actions"), EditorStyles.boldLabel);
@@ -488,6 +513,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorGUILayout.EndVertical();
     }
 
+    // Draws the current scan result list with importer metadata and skip status.
     private void DrawTextureList()
     {
         GUILayout.Label(Text("Texture Preview"), EditorStyles.boldLabel);
@@ -516,6 +542,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorGUILayout.EndScrollView();
     }
 
+    // Draw one scanned texture row in the preview list.
     private void DrawTextureRow(TextureItem item)
     {
         EditorGUILayout.BeginVertical(EditorStyles.helpBox);
@@ -534,6 +561,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorGUILayout.EndVertical();
     }
 
+    // Scan all validated target folders for Texture2D assets and cache unique results.
     private void ScanTextures()
     {
         string error;
@@ -568,6 +596,7 @@ public class TextureBatchCompressor : EditorWindow
         SetReport(TextFormat("Scan complete. Found {0} unique texture(s) in {1}.", textures.Count, string.Join(", ", validFolders)));
     }
 
+    // Create a cached texture row from an AssetDatabase path.
     private TextureItem CreateTextureItem(string path)
     {
         Texture2D texture = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
@@ -587,6 +616,7 @@ public class TextureBatchCompressor : EditorWindow
         return item;
     }
 
+    // Re-read importer metadata and recalculate whether each texture should be processed.
     private void RefreshTexturePlan()
     {
         for (int i = textures.Count - 1; i >= 0; i--)
@@ -603,6 +633,7 @@ public class TextureBatchCompressor : EditorWindow
         }
     }
 
+    // Pull the current Unity importer state into a TextureItem.
     private void UpdateTextureItem(TextureItem item)
     {
         TextureImporter importer = GetImporter(item.Path);
@@ -616,6 +647,7 @@ public class TextureBatchCompressor : EditorWindow
         item.Extension = Path.GetExtension(item.Path).ToLowerInvariant();
     }
 
+    // Apply all skip rules to one texture and return a localized skip reason when it is excluded.
     private bool ShouldProcess(TextureItem item, out string reason)
     {
         reason = string.Empty;
@@ -659,6 +691,7 @@ public class TextureBatchCompressor : EditorWindow
         return true;
     }
 
+    // Extension filter helper for PNG, JPG/JPEG, and TGA.
     private bool IsAllowedExtension(string extension)
     {
         if (!includePng && !includeJpg && !includeTga)
@@ -684,6 +717,7 @@ public class TextureBatchCompressor : EditorWindow
         return false;
     }
 
+    // Checks comma, semicolon, or newline separated path keywords against an asset path.
     private bool MatchesExcludedKeyword(string path, out string matchedKeyword)
     {
         matchedKeyword = string.Empty;
@@ -706,6 +740,7 @@ public class TextureBatchCompressor : EditorWindow
         return false;
     }
 
+    // Build and log a Dry Run report without modifying any import settings.
     private void PreviewChanges()
     {
         if (textures.Count == 0)
@@ -719,6 +754,7 @@ public class TextureBatchCompressor : EditorWindow
         SetReport(lines);
     }
 
+    // Creates the detailed preview report shown in the Unity Console.
     private List<string> BuildPreviewLines()
     {
         int readyCount = GetReadyCount();
@@ -755,6 +791,7 @@ public class TextureBatchCompressor : EditorWindow
         return lines;
     }
 
+    // Summarizes the importer changes that will be applied to a texture.
     private string BuildChangeSummary(TextureItem item)
     {
         string oldCrunchText = Text(item.Crunch ? "on" : "off");
@@ -777,6 +814,7 @@ public class TextureBatchCompressor : EditorWindow
         return summary;
     }
 
+    // Summarizes the current platform override state for preview and apply logs.
     private string FormatPlatformSettings(TextureImporterPlatformSettings settings)
     {
         if (!settings.overridden)
@@ -787,6 +825,7 @@ public class TextureBatchCompressor : EditorWindow
         return $"max {settings.maxTextureSize}, {settings.format}";
     }
 
+    // Apply the planned importer settings to every ready texture, with progress and cancel support.
     private void ApplyCompression()
     {
         RefreshTexturePlan();
@@ -867,6 +906,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorUtility.DisplayDialog(status, summary, "OK");
     }
 
+    // Write the default importer settings and optional platform overrides to one TextureImporter.
     private void ApplyImporterSettings(TextureImporter importer)
     {
         importer.maxTextureSize = newMaxSize;
@@ -878,6 +918,7 @@ public class TextureBatchCompressor : EditorWindow
         ApplyPlatformSettings(importer, "Android", overrideAndroid, androidMaxSize, androidFormat);
     }
 
+    // Apply or clear one named Unity platform override.
     private void ApplyPlatformSettings(TextureImporter importer, string platformName, bool overrideEnabled, int maxSize, TextureImporterFormat format)
     {
         TextureImporterPlatformSettings settings = importer.GetPlatformTextureSettings(platformName);
@@ -896,6 +937,7 @@ public class TextureBatchCompressor : EditorWindow
         importer.SetPlatformTextureSettings(settings);
     }
 
+    // Return only textures that passed every filter.
     private List<TextureItem> GetReadyItems()
     {
         List<TextureItem> readyItems = new List<TextureItem>();
@@ -910,6 +952,7 @@ public class TextureBatchCompressor : EditorWindow
         return readyItems;
     }
 
+    // Count textures that are currently ready for processing.
     private int GetReadyCount()
     {
         int count = 0;
@@ -924,11 +967,13 @@ public class TextureBatchCompressor : EditorWindow
         return count;
     }
 
+    // Safe importer lookup wrapper used throughout scan, preview, and apply logic.
     private TextureImporter GetImporter(string path)
     {
         return AssetImporter.GetAtPath(path) as TextureImporter;
     }
 
+    // Normalize, validate, and deduplicate every target folder before scanning.
     private bool TryNormalizeFolderPaths(out string[] validFolders, out string error)
     {
         EnsureFolderList();
@@ -960,6 +1005,7 @@ public class TextureBatchCompressor : EditorWindow
         return true;
     }
 
+    // Validate one Assets-relative folder path and return a localized error message.
     private bool TryValidateFolderPath(string path, out string error)
     {
         if (string.IsNullOrEmpty(path))
@@ -984,12 +1030,14 @@ public class TextureBatchCompressor : EditorWindow
         return true;
     }
 
+    // Unity texture search must stay inside the Assets folder.
     private bool IsAssetFolderPath(string path)
     {
         return path.Equals("Assets", StringComparison.OrdinalIgnoreCase) ||
             path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase);
     }
 
+    // Replace an existing folder list entry with a folder selected from the OS picker.
     private void SetFolderFromAbsolutePath(int index, string selectedPath)
     {
         string assetPath;
@@ -1003,6 +1051,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorUtility.DisplayDialog(Text("Invalid Folder"), error, "OK");
     }
 
+    // Add a folder selected from the OS picker to the target list.
     private void AddFolderFromAbsolutePath(string selectedPath)
     {
         string assetPath;
@@ -1016,6 +1065,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorUtility.DisplayDialog(Text("Invalid Folder"), error, "OK");
     }
 
+    // Convert an absolute OS path into a Unity Assets-relative path.
     private bool TryGetAssetFolderFromAbsolutePath(string selectedPath, out string assetPath, out string error)
     {
         string normalizedSelectedPath = NormalizeAssetPath(selectedPath);
@@ -1038,6 +1088,7 @@ public class TextureBatchCompressor : EditorWindow
         return false;
     }
 
+    // Add a typed Assets-relative path, with validation and duplicate checks.
     private void AddFolderPath(string path, bool showDialog)
     {
         string normalizedPath = NormalizeAssetPath(path.Trim());
@@ -1070,6 +1121,7 @@ public class TextureBatchCompressor : EditorWindow
         SetReport(TextFormat("Added folder: {0}", normalizedPath));
     }
 
+    // Keep at least one target folder so the UI always has a valid row.
     private void EnsureFolderList()
     {
         if (folderPaths.Count == 0)
@@ -1078,11 +1130,13 @@ public class TextureBatchCompressor : EditorWindow
         }
     }
 
+    // Use forward slashes because Unity asset paths are slash-normalized.
     private string NormalizeAssetPath(string path)
     {
         return string.IsNullOrEmpty(path) ? string.Empty : path.Replace('\\', '/');
     }
 
+    // Preset for world/map textures on PC builds.
     private void ApplyMapPcPreset()
     {
         newMaxSize = 1024;
@@ -1101,6 +1155,7 @@ public class TextureBatchCompressor : EditorWindow
         SetReport(Text("Loaded preset: Map PC."));
     }
 
+    // Preset for world/map textures on mobile or Quest builds.
     private void ApplyMapMobilePreset()
     {
         newMaxSize = 512;
@@ -1119,6 +1174,7 @@ public class TextureBatchCompressor : EditorWindow
         SetReport(Text("Loaded preset: Map Mobile."));
     }
 
+    // Preset for model textures on PC builds, preserving more detail.
     private void ApplyModelPcPreset()
     {
         newMaxSize = 2048;
@@ -1137,6 +1193,7 @@ public class TextureBatchCompressor : EditorWindow
         SetReport(Text("Loaded preset: Model PC."));
     }
 
+    // Preset for model textures on mobile or Quest builds.
     private void ApplyModelMobilePreset()
     {
         newMaxSize = 1024;
@@ -1155,6 +1212,7 @@ public class TextureBatchCompressor : EditorWindow
         SetReport(Text("Loaded preset: Model Mobile."));
     }
 
+    // Persist the current UI state in EditorPrefs so it survives editor restarts.
     private void SaveSettings(string prefix)
     {
         EnsureFolderList();
@@ -1185,6 +1243,7 @@ public class TextureBatchCompressor : EditorWindow
         EditorPrefs.SetInt(prefix + "Language", (int)language);
     }
 
+    // Restore saved UI state, falling back to the field defaults when no setting exists.
     private void LoadSettings(string prefix)
     {
         LoadFolderSettings(prefix);
@@ -1213,6 +1272,7 @@ public class TextureBatchCompressor : EditorWindow
         language = (ToolLanguage)Mathf.Clamp(EditorPrefs.GetInt(prefix + "Language", (int)language), 0, LanguageLabels.Length - 1);
     }
 
+    // Load the multi-folder setting while preserving compatibility with the old single-folder key.
     private void LoadFolderSettings(string prefix)
     {
         folderPaths.Clear();
@@ -1240,21 +1300,25 @@ public class TextureBatchCompressor : EditorWindow
         pendingFolderPath = folderPaths[folderPaths.Count - 1];
     }
 
+    // Reports are intentionally written to the Console so the main window stays compact.
     private void SetReport(string report)
     {
         Debug.Log("Texture Batch Compressor: " + report);
     }
 
+    // Multi-line reports include full preview or apply details.
     private void SetReport(List<string> lines)
     {
         Debug.Log("Texture Batch Compressor\n" + string.Join("\n", lines.ToArray()));
     }
 
+    // Separate help window that mirrors the current language selected in the main tool.
     private class TextureBatchCompressorGuideWindow : EditorWindow
     {
         private static TextureBatchCompressorGuideWindow openWindow;
         private Vector2 scrollPos;
 
+        // Open or focus the guide window and sync it to the main tool language.
         public static void Open(ToolLanguage currentLanguage)
         {
             activeLanguage = currentLanguage;
@@ -1264,6 +1328,7 @@ public class TextureBatchCompressor : EditorWindow
             openWindow.Repaint();
         }
 
+        // Repaint the guide when the main window language changes.
         public static void RepaintOpenWindow()
         {
             if (openWindow != null)
@@ -1272,12 +1337,14 @@ public class TextureBatchCompressor : EditorWindow
             }
         }
 
+        // Track the open guide instance so it can be repainted from the main window.
         private void OnEnable()
         {
             openWindow = this;
             minSize = new Vector2(520, 520);
         }
 
+        // Clear the static instance when this guide window closes.
         private void OnDisable()
         {
             if (openWindow == this)
@@ -1286,6 +1353,7 @@ public class TextureBatchCompressor : EditorWindow
             }
         }
 
+        // Draw the localized guide content.
         private void OnGUI()
         {
             ToolLanguage currentLanguage = activeLanguage;
@@ -1305,6 +1373,7 @@ public class TextureBatchCompressor : EditorWindow
             EditorGUILayout.EndScrollView();
         }
 
+        // Draw a title/body section in the guide window.
         private void DrawGuideSection(ToolLanguage currentLanguage, string titleKey, string bodyKey)
         {
             EditorGUILayout.Space();
