@@ -1,6 +1,6 @@
 # Texture Batch Compressor
 
-![Texture Batch Compressor Preview](docs/images/texture-batch-compressor-preview.svg)
+
 
 A multilingual Unity Editor tool for batch texture compression, built for VRChat world optimization.
 
